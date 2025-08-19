@@ -163,31 +163,25 @@ def run_analytics(df: pd.DataFrame, tz: str, session_timeout: int):
 
     return dfs, figs, metrics_json
 
-def call_gemini(prompt: str, metrics_json: dict, api_key: str, model_name: str, max_tokens: int) -> str:
-    if not api_key:
-        return "⚠️ Provide a Gemini API key in the sidebar to use the chat."
-    try:
-        import google.generativeai as genai
-    except Exception as e:
-        return f"⚠️ google-generativeai not installed. Install it with: pip install google-generativeai\nDetails: {e}"
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
- safe_json = json.dumps(metrics_json, default=str)   # <- converts Timestamps to ISO strings
-sys_prompt = (
-    "You are an analytics copilot..."
-    f"METRICS(JSON): {safe_json[:200000]}"
-)
+def call_gemini(metrics_json, user_query):
+    import google.generativeai as genai
+    import json
 
-        )
-        full_prompt = sys_prompt + "\n\nUSER:\n" + prompt
-        resp = model.generate_content(full_prompt, generation_config={"max_output_tokens": max_tokens})
-        text = getattr(resp, "text", None)
-        if not text and getattr(resp, "candidates", None):
-            text = resp.candidates[0].content.parts[0].text
-        return text or "⚠️ Empty response from Gemini."
-    except Exception as e:
-        return f"⚠️ Gemini error: {e}"
+    genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+
+    # ✅ convert non-serializable objects (like Timestamp) to string
+    safe_json = json.dumps(metrics_json, default=str)
+
+    sys_prompt = (
+        "You are an analytics copilot. You will be given metrics in JSON format. "
+        "Answer the user’s query about the data clearly and concisely. "
+        f"METRICS(JSON): {safe_json[:200000]}"
+    )
+
+    model = genai.GenerativeModel("gemini-pro")
+    chat = model.start_chat()
+    response = chat.send_message([sys_prompt, f"USER QUERY: {user_query}"])
+    return response.text
 
 # ---------- Run ----------
 if run_btn:
