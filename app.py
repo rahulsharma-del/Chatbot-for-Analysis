@@ -173,10 +173,12 @@ def call_gemini(prompt: str, metrics_json: dict, api_key: str, model_name: str, 
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(model_name)
-        sys_prompt = (
-            "You are an analytics copilot. Use the provided metrics to answer the user's question. "
-            "Be precise, cite specific values when possible, and keep responses under 250 words.\n\n"
-            f"METRICS(JSON): {json.dumps(metrics_json)[:200000]}"
+ safe_json = json.dumps(metrics_json, default=str)   # <- converts Timestamps to ISO strings
+sys_prompt = (
+    "You are an analytics copilot..."
+    f"METRICS(JSON): {safe_json[:200000]}"
+)
+
         )
         full_prompt = sys_prompt + "\n\nUSER:\n" + prompt
         resp = model.generate_content(full_prompt, generation_config={"max_output_tokens": max_tokens})
