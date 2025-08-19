@@ -161,20 +161,50 @@ def browser_os_share(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def retention_table(df: pd.DataFrame) -> pd.DataFrame:
-    first_seen = df.groupby("user_id")["date"].min().rename("first_day")
-    cohort_month = first_seen.dt.to_period("M").dt.to_timestamp()
-    cohort = pd.DataFrame({"user_id": first_seen.index, "first_day": first_seen.values, "cohort_month": cohort_month.values})
+    # Need these columns
+    if "user_id" not in df.columns or "date" not in df.columns:
+        return pd.DataFrame()
 
-    events = df[["user_id", "date"]].merge(cohort, on="user_id", how="left")
+    # Keep only rows with both user_id and date
+    tmp = df[["user_id", "date"]].dropna()
+    if tmp.empty:
+        return pd.DataFrame()
+
+    # First day per user = cohort start
+    first_seen = tmp.groupby("user_id")["date"].min()
+    cohort_month = first_seen.dt.to_period("M").dt.to_timestamp()
+    cohort = pd.DataFrame({
+        "user_id": first_seen.index,
+        "first_day": first_seen.values,
+        "cohort_month": cohort_month.values
+    })
+
+    # User events joined with cohort
+    events = tmp.merge(cohort, on="user_id", how="inner")
     events["day_index"] = (events["date"] - events["first_day"]).dt.days
+    # Keep non-negative day indexes
+    events = events[events["day_index"] >= 0]
+
+    if events.empty:
+        return pd.DataFrame()
 
     cohort_sizes = cohort.groupby("cohort_month")["user_id"].nunique().rename("cohort_size")
     active_by_day = (
-        events.groupby(["cohort_month", "day_index"])["user_id"].nunique().rename("active_users")
-        .reset_index()
-        .merge(cohort_sizes, on="cohort_month", how="left")
+        events.groupby(["cohort_month", "day_index"])["user_id"].nunique()
+              .rename("active_users")
+              .reset_index()
+              .merge(cohort_sizes, on="cohort_month", how="left")
     )
-    active_by_day["retention"] = (active_by_day["active_users"] / active_by_day["cohort_size"]).round(4)
+    active_by_day["retention"] = (
+        active_by_day["active_users"] / active_by_day["cohort_size"]
+    ).fillna(0).round(4)
 
-    ret = active_by_d
+    if active_by_day.empty:
+        return pd.DataFrame()
+
+    ret = active_by_day.pivot_table(
+        index="cohort_month", columns="day_index", values="retention", fill_value=0.0
+    )
+    ret = ret.sort_index()
+    return ret
 
