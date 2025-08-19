@@ -116,27 +116,46 @@ def session_duration_stats(df: pd.DataFrame) -> pd.DataFrame:
 def org_activity_last_30d(df: pd.DataFrame, today: Optional[pd.Timestamp] = None) -> pd.DataFrame:
     today = pd.Timestamp.today().normalize() if today is None else today.normalize()
     start = today - pd.Timedelta(days=30)
+
+    # Filter last-30d window (ok if "date" has NaT — mask will be False)
     mask = (df["date"] >= start) & (df["date"] <= today)
     scope = df.loc[mask].copy()
 
+    # Ensure expected cols exist
     for col in ["org_id", "org_name", "Industry"]:
         if col not in scope.columns:
             scope[col] = np.nan
 
+    # If no rows in window, return a well-formed empty frame
+    if scope.empty:
+        return pd.DataFrame(
+            columns=[
+                "org_id", "org_name", "Industry",
+                "users_30d", "sessions_30d",
+                "median_session_min", "p90_session_min",
+                "last_seen", "health_score",
+            ]
+        )
+
+    # Aggregate
     agg = scope.groupby(["org_id", "org_name", "Industry"]).agg(
         users_30d=("user_id", "nunique"),
         sessions_30d=("user_id", "size"),
         median_session_min=("session_minutes", "median"),
-        p90_session_min=("session_minutes", lambda x: np.nanpercentile(x.dropna(), 90) if x.notna().any() else np.nan),
+        p90_session_min=("session_minutes",
+                         lambda x: np.nanpercentile(x.dropna(), 90) if x.notna().any() else np.nan),
         last_seen=("date", "max"),
     ).reset_index()
 
-    if not agg.empty:
-        u = (agg["users_30d"] / agg["users_30d"].max()).fillna(0)
-        s = (agg["sessions_30d"] / agg["sessions_30d"].max()).fillna(0)
-        d = 1 - ((today - agg["last_seen"]).dt.days.clip(lower=0) / 30).fillna(1)
-        agg["health_score"] = ((0.45*u + 0.45*s + 0.10*d) * 100).round(1)
-    return agg.sort_values(["health_score", "users_30d", "sessions_30d"], ascending=False)
+    # Health score
+    u = (agg["users_30d"] / agg["users_30d"].max()).fillna(0)
+    s = (agg["sessions_30d"] / agg["sessions_30d"].max()).fillna(0)
+    d = 1 - ((today - agg["last_seen"]).dt.days.clip(lower=0) / 30).fillna(1)
+    agg["health_score"] = ((0.45*u + 0.45*s + 0.10*d) * 100).round(1)
+
+    # Sort safely (only by columns that exist)
+    sort_cols = [c for c in ["health_score", "users_30d", "sessions_30d"] if c in agg.columns]
+    return agg.sort_values(sort_cols, ascending=False) if sort_cols else agg
 
 def browser_os_share(df: pd.DataFrame) -> pd.DataFrame:
     for col in ["browser", "browser_version", "operating_system"]:
