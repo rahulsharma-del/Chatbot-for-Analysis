@@ -5,11 +5,6 @@ import io
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
-# ---------------------------
-# Helpers
-# ---------------------------
-
 def _parse_dt(series: pd.Series, tz: Optional[str]) -> pd.Series:
     s = pd.to_datetime(series, errors="coerce", utc=True)
     if tz:
