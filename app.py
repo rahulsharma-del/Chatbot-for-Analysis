@@ -1,21 +1,30 @@
+# ---------------------------
+# app.py - Streamlit main app
+# ---------------------------
+
 import os
 import io
 import json
 from typing import Dict, Any, Optional
+
 import pandas as pd
 import streamlit as st
-import analytics as A  # local module
 
-# -------------------------------
-# Page config
-# -------------------------------
+# local analytics module
+import analytics as A
+
+
+# ===========================
+# Page config & Title
+# ===========================
 st.set_page_config(page_title="Login / Activity Analytics + Gemini", layout="wide")
 st.title("🔐 Login/Activity Analytics Toolkit (In-Memory)")
 st.caption("Upload CSV/Excel, compute metrics & charts completely in memory, and generate insights with Gemini.")
 
-# -------------------------------
+
+# ===========================
 # Sidebar controls
-# -------------------------------
+# ===========================
 with st.sidebar:
     st.header("⚙️ Options")
     tz = st.text_input("Timezone (e.g., UTC, US/Eastern)", value="UTC")
@@ -25,10 +34,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🤖 Gemini")
 
-    # BACKEND SOURCES for API key (safe):
-    # 1) Streamlit Secrets: st.secrets["GOOGLE_API_KEY"]
-    # 2) Environment variable: os.environ["GOOGLE_API_KEY"]
-    # The sidebar field allows override at runtime (optional)
+    # Prefer Secrets, then ENV, then user input
     default_secret = ""
     try:
         default_secret = st.secrets.get("GOOGLE_API_KEY", "")
@@ -42,9 +48,10 @@ with st.sidebar:
     max_tokens = st.slider("Max output tokens", 200, 2000, 700, 50)
     include_sample_rows = st.checkbox("Include a tiny, anonymized sample in Gemini context", value=False)
 
-# -------------------------------
+
+# ===========================
 # File upload
-# -------------------------------
+# ===========================
 uploaded = st.file_uploader("Upload CSV or Excel (.csv, .xlsx, .xls)", type=["csv", "xlsx", "xls"])
 sheet = None
 if uploaded and uploaded.name.lower().endswith((".xlsx", ".xls")):
@@ -56,14 +63,13 @@ st.markdown("### 💬 Gemini Copilot")
 st.caption("Ask anything about the computed metrics (e.g., 'compare DAU last 14 days vs previous 14').")
 user_prompt = st.text_input("Your question", placeholder="e.g., What stands out in the last 30 days?")
 
-# keep results between reruns
 if "results" not in st.session_state:
     st.session_state["results"] = None
 
 
-# -------------------------------
+# ===========================
 # Helpers
-# -------------------------------
+# ===========================
 AUTO_MAP = {
     # common variants -> canonical
     "login_time": "logon_date",
@@ -79,13 +85,13 @@ AUTO_MAP = {
 }
 
 def _auto_map_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Map common column variants to expected names without overwriting existing."""
     cols = {c: c for c in df.columns}
     lower_map = {c.lower().strip(): c for c in df.columns}
     for k, v in AUTO_MAP.items():
         if k in lower_map and v not in df.columns:
             cols[lower_map[k]] = v
-    df = df.rename(columns=cols)
-    return df
+    return df.rename(columns=cols)
 
 def _load_df(uploaded_file, sheet_name: Optional[str]):
     if uploaded_file is None:
@@ -172,9 +178,9 @@ def gemini_summary_and_plan(metrics_json: dict, api_key: str, model_name: str, m
         return f"⚠️ Gemini error: {e}"
 
 
-# -------------------------------
-# Core analytics runner
-# -------------------------------
+# ===========================
+# Business rollups for charts/insights
+# ===========================
 def build_business_insights(df: pd.DataFrame, lookback_days: int) -> dict:
     now = pd.Timestamp.today().normalize()
     start = now - pd.Timedelta(days=lookback_days)
@@ -206,6 +212,10 @@ def build_business_insights(df: pd.DataFrame, lookback_days: int) -> dict:
         "by_hour": by_hour,
     }
 
+
+# ===========================
+# Core analytics runner
+# ===========================
 def run_analytics(df: pd.DataFrame, tz: str, session_timeout: int, lookback_days: int):
     # Normalize / auto-map
     df = _auto_map_columns(df)
@@ -231,7 +241,7 @@ def run_analytics(df: pd.DataFrame, tz: str, session_timeout: int, lookback_days
     ret_tbl = A.retention_table(df)
     concurrency = A.estimate_daily_peak_concurrency(df)
 
-    # Charts
+    # Charts (matplotlib figures provided by analytics.py)
     figs = {}
     st.markdown("#### Core Trends")
     if not daily.empty:
@@ -316,7 +326,7 @@ def run_analytics(df: pd.DataFrame, tz: str, session_timeout: int, lookback_days
         },
     }
 
-    # Optionally include tiny anonymized sample (no names/emails)
+    # Optional tiny anonymized sample
     if include_sample_rows and not df.empty:
         cols = [c for c in df.columns if c not in ["email_address", "first_name", "last_name", "Full Name"]]
         sample = df[cols].head(50).copy()
@@ -333,23 +343,22 @@ def run_analytics(df: pd.DataFrame, tz: str, session_timeout: int, lookback_days
     return dfs, figs, metrics_json
 
 
-# -------------------------------
+# ===========================
 # Run button
-# -------------------------------
+# ===========================
 if run_btn:
     df, err = _load_df(uploaded, sheet)
     if err:
         st.error(err)
     else:
         with st.spinner("Crunching numbers (in memory)..."):
-            results = run_analytics(df, tz=tz, session_timeout=session_timeout, lookback_days=lookback_days)
-            st.session_state["results"] = {
-                "dfs": results[0], "figs": results[1], "metrics_json": results[2]
-            }
+            dfs, figs, metrics_json = run_analytics(df, tz=tz, session_timeout=session_timeout, lookback_days=lookback_days)
+            st.session_state["results"] = {"dfs": dfs, "figs": figs, "metrics_json": metrics_json}
 
-# -------------------------------
+
+# ===========================
 # UI: Tables / Downloads / Chat / Plan
-# -------------------------------
+# ===========================
 res = st.session_state["results"]
 tabs = st.tabs(["Tables", "Downloads", "Gemini Chat", "Insights & Action Plan"])
 
@@ -393,4 +402,5 @@ with tabs[3]:
             with st.spinner("Asking Gemini for an executive summary and action plan..."):
                 text = gemini_summary_and_plan(res["metrics_json"], gemini_api_key, gemini_model, max_tokens)
                 st.markdown(text)
+
 
