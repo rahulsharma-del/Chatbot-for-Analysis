@@ -1,7 +1,5 @@
-
 from __future__ import annotations
-
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple
 import io
 
 import numpy as np
@@ -88,8 +86,7 @@ def daily_metrics(df: pd.DataFrame) -> pd.DataFrame:
         m = pd.Timestamp(d).to_period("M").to_timestamp()
         mau_for_day.loc[d] = float(mau_monthly.get(m, np.nan))
     stickiness = (dau / mau_for_day).rename("stickiness_dau_over_mau")
-    result = pd.concat([sessions, dau, stickiness], axis=1).reset_index().rename(columns={"index": "date"})
-    return result
+    return pd.concat([sessions, dau, stickiness], axis=1).reset_index()
 
 def weekly_metrics(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -116,17 +113,13 @@ def session_duration_stats(df: pd.DataFrame) -> pd.DataFrame:
 def org_activity_last_30d(df: pd.DataFrame, today: Optional[pd.Timestamp] = None) -> pd.DataFrame:
     today = pd.Timestamp.today().normalize() if today is None else today.normalize()
     start = today - pd.Timedelta(days=30)
-
-    # Filter last-30d window (ok if "date" has NaT — mask will be False)
     mask = (df["date"] >= start) & (df["date"] <= today)
     scope = df.loc[mask].copy()
 
-    # Ensure expected cols exist
     for col in ["org_id", "org_name", "Industry"]:
         if col not in scope.columns:
             scope[col] = np.nan
 
-    # If no rows in window, return a well-formed empty frame
     if scope.empty:
         return pd.DataFrame(
             columns=[
@@ -137,7 +130,6 @@ def org_activity_last_30d(df: pd.DataFrame, today: Optional[pd.Timestamp] = None
             ]
         )
 
-    # Aggregate
     agg = scope.groupby(["org_id", "org_name", "Industry"]).agg(
         users_30d=("user_id", "nunique"),
         sessions_30d=("user_id", "size"),
@@ -147,13 +139,11 @@ def org_activity_last_30d(df: pd.DataFrame, today: Optional[pd.Timestamp] = None
         last_seen=("date", "max"),
     ).reset_index()
 
-    # Health score
     u = (agg["users_30d"] / agg["users_30d"].max()).fillna(0)
     s = (agg["sessions_30d"] / agg["sessions_30d"].max()).fillna(0)
     d = 1 - ((today - agg["last_seen"]).dt.days.clip(lower=0) / 30).fillna(1)
     agg["health_score"] = ((0.45*u + 0.45*s + 0.10*d) * 100).round(1)
 
-    # Sort safely (only by columns that exist)
     sort_cols = [c for c in ["health_score", "users_30d", "sessions_30d"] if c in agg.columns]
     return agg.sort_values(sort_cols, ascending=False) if sort_cols else agg
 
@@ -186,104 +176,5 @@ def retention_table(df: pd.DataFrame) -> pd.DataFrame:
     )
     active_by_day["retention"] = (active_by_day["active_users"] / active_by_day["cohort_size"]).round(4)
 
-    ret = active_by_day.pivot_table(index="cohort_month", columns="day_index", values="retention", fill_value=0.0)
-    ret = ret.sort_index()
-    return ret
+    ret = active_by_d
 
-def estimate_daily_peak_concurrency(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Sweep-line estimate of concurrent sessions using login (+1) and logout (-1) events.
-    Handles missing data and works across pandas versions.
-    """
-    # Guard: if required cols are missing or all-NaT, return empty
-    if "logon_date_parsed" not in df.columns or "logout_date_effective" not in df.columns:
-        return pd.DataFrame(columns=["date", "peak_concurrency"])
-
-    starts = df["logon_date_parsed"].dropna()
-    ends = df["logout_date_effective"].dropna()
-
-    if starts.empty and ends.empty:
-        return pd.DataFrame(columns=["date", "peak_concurrency"])
-
-    events = pd.concat([
-        pd.Series(1, index=starts.values),
-        pd.Series(-1, index=ends.values),
-    ]).sort_index()
-
-    # Accumulate to get concurrency at event times
-    concur = events.cumsum()
-
-    # Daily peak (may be empty if no events)
-    daily_peak = concur.resample("D").max().fillna(0).astype(int)
-
-    # Name the series and reset index in a version-safe way
-    daily_peak = daily_peak.rename("peak_concurrency")
-    daily_peak.index.name = "date"
-    return daily_peak.reset_index()
-
-
-# ---------------------------
-# Visualization (return Figures and PNG bytes)
-# ---------------------------
-
-def _fig_to_png_bytes(fig) -> bytes:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return buf.getvalue()
-
-def make_time_series_fig(df_ts: pd.DataFrame, x_col: str, y_col: str, title: str):
-    fig = plt.figure(figsize=(10, 5))
-    ax = fig.add_subplot(111)
-    ax.plot(df_ts[x_col], df_ts[y_col])
-    ax.set_xlabel(x_col)
-    ax.set_ylabel(y_col)
-    ax.set_title(title)
-    fig.autofmt_xdate()
-    return fig, _fig_to_png_bytes(fig)
-
-def make_hist_fig(series: pd.Series, title: str, xlabel: str, bins: int = 50, xmax_p: float = 0.99):
-    s = series.dropna()
-    if s.empty:
-        return None, None
-    clip = s.quantile(xmax_p)
-    s = s.clip(upper=clip)
-    fig = plt.figure(figsize=(10, 5))
-    ax = fig.add_subplot(111)
-    ax.hist(s, bins=bins)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel("count")
-    ax.set_title(title)
-    return fig, _fig_to_png_bytes(fig)
-
-def make_heatmap_hour_dow_fig(df: pd.DataFrame):
-    tbl = df.pivot_table(index="dow", columns="hour", values="user_id", aggfunc="count", fill_value=0)
-    tbl = tbl.reindex(index=[0,1,2,3,4,5,6], columns=list(range(0,24)), fill_value=0)
-    fig = plt.figure(figsize=(10, 5))
-    ax = fig.add_subplot(111)
-    im = ax.imshow(tbl.values, aspect="auto")
-    ax.set_yticks(range(7))
-    ax.set_yticklabels(["Mon","Tue","Wed","Thu","Fri","Sat","Sun"])
-    ax.set_xticks(range(0,24,2))
-    ax.set_xlabel("Hour of Day")
-    ax.set_ylabel("Day of Week")
-    fig.colorbar(im, ax=ax, label="logins")
-    ax.set_title("Logins Heatmap (Hour x DayOfWeek)")
-    return fig, _fig_to_png_bytes(fig)
-
-def make_retention_heatmap_fig(ret: pd.DataFrame):
-    if ret.empty:
-        return None, None
-    fig = plt.figure(figsize=(10, 5))
-    ax = fig.add_subplot(111)
-    im = ax.imshow(ret.values, aspect="auto", vmin=0, vmax=1)
-    ax.set_yticks(range(len(ret.index)))
-    ax.set_yticklabels([d.strftime("%Y-%m") for d in ret.index])
-    max_day = min(60, ret.shape[1]-1) if ret.shape[1] else 0
-    ax.set_xticks(range(0, max_day+1, 5))
-    ax.set_xlabel("Day since first login")
-    ax.set_ylabel("Cohort month")
-    fig.colorbar(im, ax=ax, label="retention (0..1)")
-    ax.set_title("Cohort Retention (Rows: Cohort Month, Cols: Day Index)")
-    return fig, _fig_to_png_bytes(fig)
