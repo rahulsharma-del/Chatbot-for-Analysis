@@ -207,4 +207,42 @@ def retention_table(df: pd.DataFrame) -> pd.DataFrame:
     )
     ret = ret.sort_index()
     return ret
+    def estimate_daily_peak_concurrency(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Estimate daily peak concurrency from login (+1) and logout (-1) events.
+    Robust to empty/missing cols and index dtype issues.
+    """
+    # Guard: required columns
+    if "logon_date_parsed" not in df.columns:
+        return pd.DataFrame(columns=["date", "peak_concurrency"])
+    if "logout_date_effective" not in df.columns:
+        # create an empty col so code below still works
+        df = df.copy()
+        df["logout_date_effective"] = pd.NaT
+
+    # Coerce to datetime; drop NaT
+    starts = pd.to_datetime(df["logon_date_parsed"], errors="coerce").dropna()
+    ends   = pd.to_datetime(df["logout_date_effective"], errors="coerce").dropna()
+
+    if starts.empty and ends.empty:
+        return pd.DataFrame(columns=["date", "peak_concurrency"])
+
+    # Build +1/-1 event stream with a guaranteed DatetimeIndex
+    start_idx = pd.DatetimeIndex(starts)
+    end_idx   = pd.DatetimeIndex(ends)
+
+    events = pd.concat([
+        pd.Series(1, index=start_idx),
+        pd.Series(-1, index=end_idx),
+    ]).sort_index()
+
+    events.index = pd.DatetimeIndex(events.index)  # enforce datetime index
+    concur = events.cumsum()
+
+    # Daily peak concurrency
+    daily_peak = concur.resample("D").max().fillna(0).astype(int)
+    daily_peak = daily_peak.rename("peak_concurrency")
+    daily_peak.index.name = "date"
+    return daily_peak.reset_index()
+
 
