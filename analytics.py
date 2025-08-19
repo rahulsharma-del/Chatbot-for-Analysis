@@ -191,17 +191,36 @@ def retention_table(df: pd.DataFrame) -> pd.DataFrame:
     return ret
 
 def estimate_daily_peak_concurrency(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sweep-line estimate of concurrent sessions using login (+1) and logout (-1) events.
+    Handles missing data and works across pandas versions.
+    """
+    # Guard: if required cols are missing or all-NaT, return empty
+    if "logon_date_parsed" not in df.columns or "logout_date_effective" not in df.columns:
+        return pd.DataFrame(columns=["date", "peak_concurrency"])
+
     starts = df["logon_date_parsed"].dropna()
     ends = df["logout_date_effective"].dropna()
+
+    if starts.empty and ends.empty:
+        return pd.DataFrame(columns=["date", "peak_concurrency"])
 
     events = pd.concat([
         pd.Series(1, index=starts.values),
         pd.Series(-1, index=ends.values),
     ]).sort_index()
 
+    # Accumulate to get concurrency at event times
     concur = events.cumsum()
-    daily_peak = concur.resample("D").max().fillna(0).astype(int).rename("peak_concurrency")
-    return daily_peak.reset_index(names=["date"])
+
+    # Daily peak (may be empty if no events)
+    daily_peak = concur.resample("D").max().fillna(0).astype(int)
+
+    # Name the series and reset index in a version-safe way
+    daily_peak = daily_peak.rename("peak_concurrency")
+    daily_peak.index.name = "date"
+    return daily_peak.reset_index()
+
 
 # ---------------------------
 # Visualization (return Figures and PNG bytes)
