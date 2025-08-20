@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import analytics as A  # local analytics.py module
-
+import analytics as A 
 def main():
     st.set_page_config(page_title="Login/Activity Analytics", layout="wide")
     st.title("📊 Login / Activity Analytics Dashboard")
