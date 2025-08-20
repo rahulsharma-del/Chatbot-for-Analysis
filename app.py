@@ -6,8 +6,6 @@ from typing import Dict, Any, Optional
 import pandas as pd
 import streamlit as st
 
-import analytics as A  # local module
-
 # -------------------------------
 # Page config
 # -------------------------------
