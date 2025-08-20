@@ -8,8 +8,6 @@ from typing import Dict, Any, Optional
 import pandas as pd
 import streamlit as st
 
-import analytics as A   # local analytics.py module in the same folder
-
 
 def main():
     st.set_page_config(page_title="Login/Activity Analytics", layout="wide")
