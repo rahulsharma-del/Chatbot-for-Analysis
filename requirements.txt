@@ -4,3 +4,7 @@ matplotlib
 streamlit>=1.34
 openpyxl
 google-generativeai
+
+requests
+beautifulsoup4
+feedparser
